@@ -9,7 +9,6 @@
         var btns = document.getElementsByTagName('input');
         for (btn of btns) {
             let value = btn.value;
-            console.log("b "+value);
             btn.onclick = function() {
                 let resp = fetch("activate/" + value, {
                     method: "POST",

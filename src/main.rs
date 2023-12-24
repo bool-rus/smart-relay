@@ -17,6 +17,12 @@ const INDEX_PAGE: &'static [u8] = include_bytes!("index.html");
 const STACK_SIZE: usize = 10240;
 
 
+#[derive(Default)]
+struct Flags {
+    relay1: AtomicBool,
+    relay2: AtomicBool,
+}
+
 fn main() {
     if let Some(_) = create_and_run("4G-UFI-24D", "1234567890").err() {
         restart();
@@ -55,7 +61,7 @@ fn create_wifi(modem: Modem, ssid: &str, passwd: &str) -> anyhow::Result<Blockin
     Ok(wifi)
 }
 
-fn start_server(flag: Arc<AtomicBool>) -> anyhow::Result<()> {
+fn start_server(flags: Arc<Flags>) -> anyhow::Result<()> {
     use esp_idf_svc::http::server::*;
     use esp_idf_svc::io::*;
     let server_configuration = esp_idf_svc::http::server::Configuration {
@@ -71,7 +77,14 @@ fn start_server(flag: Arc<AtomicBool>) -> anyhow::Result<()> {
     })?;
 
     server.fn_handler("/activate/relay1", Method::Post, |req| {
-        flag.store(true, Relaxed);
+        flags.relay1.store(true, Relaxed);
+        let mut resp = req.into_ok_response()?;
+        resp.write_all("Relay 1 activated".as_bytes())?;
+
+        Ok(())
+    })?;
+    server.fn_handler("/activate/relay2", Method::Post, |req| {
+        flags.relay2.store(true, Relaxed);
         let mut resp = req.into_ok_response()?;
         resp.write_all("Relay 1 activated".as_bytes())?;
 
@@ -118,14 +131,18 @@ impl MyDevice {
     fn run(&mut self) -> Result<()> {
         self.blink(1, 1000)?;
         self.connect_wifi()?;
-        let flag = Arc::new(AtomicBool::new(false));
-        start_server(flag.clone())?;
+        let flags = Arc::new(Flags::default());
+        start_server(flags.clone())?;
         loop {
             FreeRtos::delay_ms(500);
             self.led.set_high()?;
-            if flag.load(Relaxed) {
-                self.enable_relay()?;
-                flag.store(false, Relaxed);
+            if flags.relay1.load(Relaxed) {
+                enable_on_sec(&mut self.relay1)?;
+                flags.relay1.store(false, Relaxed);
+            }
+            if flags.relay2.load(Relaxed) {
+                enable_on_sec(&mut self.relay2)?;
+                flags.relay2.store(false, Relaxed);
             }
             if !self.wifi.is_connected()? {
                 self.blink(30, 15)?;
@@ -144,12 +161,12 @@ impl MyDevice {
         }
         Ok(())
     }
-    fn enable_relay(&mut self) -> Result<()> {
-        self.relay1.set_low()?;
-        FreeRtos::delay_ms(1000);
-        self.relay1.set_high()?;
-        Ok(())
-    }
 
 }
 
+fn enable_on_sec(pin: &mut PinDriver<'static, AnyOutputPin, Output>) -> Result<()> {
+    pin.set_low()?;
+    FreeRtos::delay_ms(1000);
+    pin.set_high()?;
+    Ok(())
+}
