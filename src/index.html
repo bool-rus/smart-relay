@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <form>
+        <div><input value="relay1" type="button">Activate relay1</input></div>
+        <div><input value="relay2" type="button">Activate relay2</input></div>
+    </form>
+    <script type="text/javascript">
+        var btns = document.getElementsByTagName('input');
+        for (btn of btns) {
+            let value = btn.value;
+            console.log("b "+value);
+            btn.onclick = function() {
+                let resp = fetch("activate/" + value, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Accept: "application/json",
+                    },
+                });
+            };
+        }
+    </script>
+</body>
+</html>

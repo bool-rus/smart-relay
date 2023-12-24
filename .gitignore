@@ -1,0 +1,11 @@
+target
+.vscode
+.embuild
+
+/opt/homebrew/bin:/opt/homebrew/sbin:/Users/sbt-barinov-sv/yandex-cloud/bin:/Users/sbt-barinov-sv/ydb/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/go/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/Users/sbt-barinov-sv/.espressif/tools/xtensa-esp32-elf-gcc/12.2.0_20230208-aarch64-apple-darwin/bin/:/Users/sbt-barinov-sv/.espressif/tools/xtensa-esp32s2-elf-gcc/12.2.0_20230208-aarch64-apple-darwin/bin/:/Users/sbt-barinov-sv/.espressif/tools/xtensa-esp32s3-elf-gcc/12.2.0_20230208-aarch64-apple-darwin/bin/:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/sbt-barinov-sv/.cargo/bin:/Users/sbt-barinov-sv/yandex-cloud/bin:/Users/sbt-barinov-sv/ydb/bin:/Applications/apache-maven-3.8.4/bin:/Applications/apache-maven-3.8.4/bin
+/opt/homebrew/bin:/opt/homebrew/sbin:/Users/sbt-barinov-sv/yandex-cloud/bin:/Users/sbt-barinov-sv/ydb/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/go/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/Users/sbt-barinov-sv/.espressif/tools/xtensa-esp32-elf-gcc/12.2.0_20230208-aarch64-apple-darwin/bin/:/Users/sbt-barinov-sv/.espressif/tools/xtensa-esp32s2-elf-gcc/12.2.0_20230208-aarch64-apple-darwin/bin/:/Users/sbt-barinov-sv/.espressif/tools/xtensa-esp32s3-elf-gcc/12.2.0_20230208-aarch64-apple-darwin/bin/:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/sbt-barinov-sv/.cargo/bin:/Users/sbt-barinov-sv/yandex-cloud/bin:/Users/sbt-barinov-sv/ydb/bin:/Applications/apache-maven-3.8.4/bin:/Applications/apache-maven-3.8.4/bin
+
+
+
+/Users/sbt-barinov-sv/.espressif/tools/xtensa-esp32-elf-clang/esp-16.0.0-20230516-aarch64-apple-darwin/esp-clang/lib/
+/Users/sbt-barinov-sv/.espressif/tools/xtensa-esp32-elf-clang/esp-16.0.0-20230516-aarch64-apple-darwin/esp-clang/lib/
