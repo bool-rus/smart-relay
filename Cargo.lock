@@ -446,12 +446,10 @@ dependencies = [
  "embedded-io-async",
  "enumset",
  "heapless",
- "log",
  "no-std-net",
  "num_enum",
  "serde",
  "strum 0.25.0",
- "strum_macros 0.25.3",
 ]
 
 [[package]]
@@ -485,7 +483,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "226c0da7462c13fb57e5cc9e0dc8f0635e7d27f276a3a7fd30054647f669007d"
 dependencies = [
  "enumset_derive",
- "serde",
 ]
 
 [[package]]
@@ -700,7 +697,6 @@ dependencies = [
  "atomic-polyfill",
  "hash32",
  "rustc_version",
- "serde",
  "spin",
  "stable_deref_trait",
 ]
@@ -883,9 +879,6 @@ name = "no-std-net"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bcece43b12349917e096cddfa66107277f123e6c96a5aea78711dc601a47152"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "nom"
@@ -1110,10 +1103,11 @@ name = "s2-smart-relay"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "embedded-svc",
  "embuild",
  "esp-idf-svc",
  "log",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
