@@ -15,16 +15,15 @@ use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::info;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const INDEX_PAGE: &'static [u8] = include_bytes!("index.html");
 
 const STACK_SIZE: usize = 10240;
 const NS: &str = "wifi-auth-data";
-const SSID: &str = "ssid";
-const PASS: &str = "pass";
+const WIFI_CREDS: &str = "wifi-creds";
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 struct WifiCreds {
     ssid: String,
     pass: String,
@@ -54,8 +53,10 @@ fn create_and_run() -> Result<()> {
     Ok(())
 }
 
-fn create_ap_wifi(modem: Modem, ssid: &str, pass: &str) -> anyhow::Result<BlockingWifi<EspWifi<'static>>> {
-    info!("creating wifi...");
+fn create_ap_wifi(modem: Modem) -> anyhow::Result<BlockingWifi<EspWifi<'static>>> {
+    let ssid = "smart-relay-ap";
+    let pass = "booliscool";
+    info!("Starting WiFi AP...");
     use esp_idf_svc::wifi;
     let sys_loop = EspSystemEventLoop::take()?;
 
@@ -73,24 +74,19 @@ fn create_ap_wifi(modem: Modem, ssid: &str, pass: &str) -> anyhow::Result<Blocki
         ..Default::default()
     });
     wifi.set_configuration(&wifi_configuration)?;
-    info!("wifi created!");
-    info!("Connecting to wifi...");
     wifi.start()?;
+    info!("WiFi AP started");
     Ok(wifi)
 }
 
 fn create_client_wifi(modem: Modem, ssid: &str, pass: &str) -> anyhow::Result<BlockingWifi<EspWifi<'static>>> {
-    info!("creating wifi ssid: [{}], pass: [{}] ...", ssid, pass);
     use esp_idf_svc::wifi;
-
+    info!("Connecting to wifi as client");
     let sys_loop = EspSystemEventLoop::take()?;
-
     let mut wifi = BlockingWifi::wrap(
         EspWifi::new(modem, sys_loop.clone(), None)?,
         sys_loop,
     )?;
-    info!("blocking wifi created");
-
     let wifi_configuration = wifi::Configuration::Client(wifi::ClientConfiguration {
         ssid: ssid.into(),
         bssid: None,
@@ -98,12 +94,10 @@ fn create_client_wifi(modem: Modem, ssid: &str, pass: &str) -> anyhow::Result<Bl
         password: pass.into(),
         channel: None,
     });
-    info!("wifi conf: {:?}", wifi_configuration);
     wifi.set_configuration(&wifi_configuration)?;
-    info!("wifi created!");
-    info!("Connecting to wifi...");
     wifi.start()?;
     wifi.connect()?;
+    info!("Wifi connected");
     Ok(wifi)
 }
 
@@ -170,28 +164,21 @@ struct SmartRelay {
 impl SmartRelay {
     fn create() -> Result<Self> { 
         let partition = EspDefaultNvsPartition::take()?;
-        let nvs = EspNvs::new(partition.clone(), NS, true)?;
+        let mut nvs = EspNvs::new(partition.clone(), NS, true)?;
         info!("Got namespace from default partition");
-        let mut ssid_buf = vec![0u8;32];
-        let mut pass_buf = vec![0u8;32];
-        let ssid = nvs.get_str(SSID, ssid_buf.as_mut_slice())?;
-        let pass = nvs.get_str(PASS, pass_buf.as_mut_slice())?;
-        
-        let mut count = nvs.get_u32("count")?.unwrap_or_default();
-        info!("Current count: {}", count);
-        count += 1;
-        nvs.set_u32("count", count)?;
+        let mut buf = vec![0u8;100];
+        let wifi_creds = nvs.get_raw(WIFI_CREDS, &mut buf)?
+        .map(|data|serde_json::from_slice::<WifiCreds>(data));
 
         let peripherals = Peripherals::take()?;
-        let wifi = match (ssid, pass) {
-            (Some(ssid), Some(pass)) => {
-                let mut ssid = ssid.to_string();
-                let mut pass = pass.to_string();
-                ssid.pop();
-                pass.pop();
-                create_client_wifi(peripherals.modem, &ssid, &pass)
+        let wifi = match wifi_creds {
+            Some(Ok(creds)) => create_client_wifi(peripherals.modem, &creds.ssid, &creds.pass),
+            Some(Err(e)) => {
+                log::error!("Cannot parse wifi credentials: {:?}", e);
+                nvs.remove(WIFI_CREDS)?;
+                create_ap_wifi(peripherals.modem)
             },
-            _ => create_ap_wifi(peripherals.modem, "smart-relay-ap", "booliscool"),
+            None => create_ap_wifi(peripherals.modem)
         }?;
 
         let led_pin: AnyOutputPin = peripherals.pins.gpio15.into();
@@ -199,17 +186,12 @@ impl SmartRelay {
 
         let relay1: AnyOutputPin = peripherals.pins.gpio14.into();
         let relay2: AnyOutputPin = peripherals.pins.gpio13.into();
-        let mut  relay = PinDriver::output(relay1)?;
-        relay.set_high()?;
+        let mut  relay1 = PinDriver::output(relay1)?;
+        relay1.set_high()?;
         let mut relay2 = PinDriver::output(relay2)?;
         relay2.set_high()?;
         
-        Ok(Self {led, relay1: relay, relay2, wifi, nvs})
-    }
-    fn connect_wifi(&mut self) -> Result<()> {
-        self.wifi.wait_netif_up()?;
-        info!("Wifi connected!");
-        Ok(())
+        Ok(Self {led, relay1, relay2, wifi, nvs})
     }
     fn invoke_creds(flags: Arc<Flags>) -> Option<WifiCreds> {
         let mut creds = flags.creds.lock().unwrap();
@@ -222,7 +204,7 @@ impl SmartRelay {
         }
     }
     fn run(&mut self) -> Result<()> {
-        self.connect_wifi()?;
+        self.wifi.wait_netif_up()?;
         let flags = Arc::new(Flags::default());
         start_server(flags.clone())?;
         loop {
@@ -244,8 +226,8 @@ impl SmartRelay {
             }
             if let Some(c) = Self::invoke_creds(flags.clone()) {
                 info!("received new wifi creds, esp will update and restart");
-                self.nvs.set_str(SSID, &c.ssid)?;
-                self.nvs.set_str(PASS, &c.pass)?;
+                let buf = serde_json::to_vec(&c)?;
+                self.nvs.set_raw(WIFI_CREDS, &buf)?;
                 restart();
             }
             self.led.set_low()?;
