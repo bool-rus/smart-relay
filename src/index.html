@@ -2,11 +2,31 @@
 <html>
 <body>
     <form>
-        <div><input value="relay1" type="button">Activate relay1</input></div>
-        <div><input value="relay2" type="button">Activate relay2</input></div>
+        <div>
+            <label for="ssid">SSID</label>
+            <input name="ssid">  
+        </div>
+        <div>
+            <label for="pass">PASS</label>
+            <input name="pass">
+        </div>
+        <div><input id="update-btn" value="connect" type="button">update wifi config</input></div>
+        <div><input class="relay-btn" value="relay1" type="button">Activate relay1</input></div>
+        <div><input class="relay-btn" value="relay2" type="button">Activate relay2</input></div>
     </form>
     <script type="text/javascript">
-        var btns = document.getElementsByTagName('input');
+        var btns = document.getElementsByClassName('relay-btn');
+        document.getElementById("update-btn").onclick = function() {
+            let form = document.forms[0];
+            let data = {ssid: form.ssid.value, pass: form.pass.value};
+            let resp = fetch("update", {
+                method: "POST",
+                body: JSON.stringify(data),
+                headers: {
+                    "Content-Type": "application/json"
+                }
+            })
+        };
         for (btn of btns) {
             let value = btn.value;
             btn.onclick = function() {
