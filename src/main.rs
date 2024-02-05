@@ -226,8 +226,12 @@ impl SmartRelay {
             }
             if let Some(c) = Self::invoke_creds(flags.clone()) {
                 info!("received new wifi creds, esp will update and restart");
-                let buf = serde_json::to_vec(&c)?;
-                self.nvs.set_raw(WIFI_CREDS, &buf)?;
+                if c.ssid.is_empty() {
+                    self.nvs.remove(WIFI_CREDS)?;
+                } else {
+                    let buf = serde_json::to_vec(&c)?;
+                    self.nvs.set_raw(WIFI_CREDS, &buf)?;
+                }
                 restart();
             }
             self.led.set_low()?;
