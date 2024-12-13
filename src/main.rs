@@ -23,6 +23,8 @@ const STACK_SIZE: usize = 10240;
 const NS: &str = "wifi-auth-data";
 const WIFI_CREDS: &str = "wifi-creds";
 
+mod ledboard;
+
 #[derive(Serialize, Deserialize, Clone)]
 struct WifiCreds {
     ssid: String,
@@ -37,7 +39,9 @@ struct Flags {
 }
 
 fn main() {
+    esp_idf_svc::sys::link_patches();
     EspLogger::initialize_default();
+    info!("hello!");
     if let Some(e) = create_and_run().err() {
         log::error!("received error: {:?}", e);
         info!("restarting...");
@@ -47,7 +51,6 @@ fn main() {
 
 
 fn create_and_run() -> Result<()> {
-    esp_idf_svc::sys::link_patches();
     let mut dev = SmartRelay::create()?;
     dev.run()?;
     Ok(())
@@ -88,11 +91,13 @@ fn create_client_wifi(modem: Modem, ssid: &str, pass: &str) -> anyhow::Result<Bl
         sys_loop,
     )?;
     let wifi_configuration = wifi::Configuration::Client(wifi::ClientConfiguration {
-        ssid: ssid.into(),
+        ssid: ssid.try_into().unwrap(),
         bssid: None,
         auth_method: wifi::AuthMethod::WPA2Personal,
-        password: pass.into(),
+        password: pass.try_into().unwrap(),
         channel: None,
+        pmf_cfg: Default::default(),
+        scan_method: wifi::ScanMethod::FastScan,
     });
     wifi.set_configuration(&wifi_configuration)?;
     wifi.start()?;
@@ -111,27 +116,29 @@ fn start_server(flags: Arc<Flags>) -> anyhow::Result<()> {
     };
     let mut server = EspHttpServer::new(&server_configuration)?;
 
-    server.fn_handler("/", Method::Get, |req| {
+    server.fn_handler::<EspIOError, _>("/", Method::Get, |req| {
         let mut resp = req.into_ok_response()?;
         resp.write_all(INDEX_PAGE)?;
         Ok(())
     })?;
-
-    server.fn_handler("/activate/relay1", Method::Post, |req| {
-        flags.relay1.store(true, Relaxed);
+    let flagsc = flags.clone();
+    server.fn_handler::<EspIOError, _>("/activate/relay1", Method::Post, move |req| {
+        flagsc.relay1.store(true, Relaxed);
         let mut resp = req.into_ok_response()?;
         resp.write_all("Relay 1 activated".as_bytes())?;
 
         Ok(())
     })?;
-    server.fn_handler("/activate/relay2", Method::Post, |req| {
-        flags.relay2.store(true, Relaxed);
+    let flagsc = flags.clone();
+    server.fn_handler::<EspIOError, _>("/activate/relay2", Method::Post, move |req| {
+        flagsc.relay2.store(true, Relaxed);
         let mut resp = req.into_ok_response()?;
         resp.write_all("Relay 2 activated".as_bytes())?;
 
         Ok(())
     })?;
-    server.fn_handler("/update", Method::Post, |mut req| {
+    let flagsc = flags.clone();
+    server.fn_handler::<EspIOError, _>("/update", Method::Post, move |mut req| {
         let len = req.header("Content-Length").unwrap_or("0");
         let len: usize = len.parse().unwrap_or(0); 
         if len > 100 {
@@ -139,10 +146,10 @@ fn start_server(flags: Arc<Flags>) -> anyhow::Result<()> {
             return Ok(());
         }
         let mut buf = vec![0u8; len];
-        req.read_exact(&mut buf)?;
-        let data = serde_json::from_slice::<WifiCreds>(&buf)?;
+        req.read_exact(&mut buf);
+        let data = serde_json::from_slice::<WifiCreds>(&buf).unwrap();
         {
-            let mut creds = flags.creds.lock().unwrap();
+            let mut creds = flagsc.creds.lock().unwrap();
             *creds = Some(data);
         }
         req.into_ok_response()?.write_all(b"OK")?;
@@ -191,7 +198,16 @@ impl SmartRelay {
         let mut relay2 = PinDriver::output(relay2)?;
         relay2.set_high()?;
         
-        Ok(Self {led, relay1, relay2, wifi, nvs})
+        let mut this = Self {led, relay1, relay2, wifi, nvs};
+        this.led.set_high()?;
+        FreeRtos::delay_ms(3000);
+        this.led.set_low()?;
+        info!("running led");
+        match ledboard::start_led(peripherals.rmt.channel0, peripherals.pins.gpio16) {
+            Ok(()) => println!("led is ok"),
+            Err(e) => println!("err on led: {e:?}"),
+        }
+        Ok(this)
     }
     fn invoke_creds(flags: Arc<Flags>) -> Option<WifiCreds> {
         let mut creds = flags.creds.lock().unwrap();
