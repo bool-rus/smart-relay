@@ -1,5 +1,8 @@
 <!DOCTYPE html>
 <html>
+    <head>
+        <meta charset="UTF-8">
+      </head>
 <body>
     <form>
         <div>
@@ -10,7 +13,13 @@
             <label for="pass">PASS</label>
             <input name="pass">
         </div>
+        <div>
+            <label for="text">Текст</label>
+            <input name="text">
+        </div>
+
         <div><input id="update-btn" value="connect" type="button">update wifi config</input></div>
+        <div><input id="update-text" value="show text" type="button">show text</input></div>
         <div><input class="relay-btn" value="relay1" type="button">Activate relay1</input></div>
         <div><input class="relay-btn" value="relay2" type="button">Activate relay2</input></div>
     </form>
@@ -24,6 +33,17 @@
                 body: JSON.stringify(data),
                 headers: {
                     "Content-Type": "application/json"
+                }
+            })
+        };
+        document.getElementById("update-text").onclick = function() {
+            let form = document.forms[0];
+            let data = form.text.value;
+            let resp = fetch("text", {
+                method: "POST",
+                body: data,
+                headers: {
+                    "Content-Type": "application/json; charset=utf-8"
                 }
             })
         };
