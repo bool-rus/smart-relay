@@ -6,7 +6,6 @@ use ws2812_esp32_rmt_driver::*;
 use anyhow::Result;
 
 use crate::font::Font;
-const LEDS_COUNT: usize = 512;
 const BOARD_HEIGHT: usize = u8::BITS as usize;
 
 pub enum Message {
@@ -47,13 +46,13 @@ impl LedBoard {
         let (tx,rx) = crossbeam::channel::unbounded();
         let txc = tx.clone();
         let timer = timer.timer(move ||{txc.send(Message::Move);})?;
-        timer.every(Duration::from_millis(700))?;
-    
+        timer.every(Duration::from_millis(60))?;
+        tx.send(Message::Text("*** С наступающим 2025 годом! Всем здоровья, достатка, благополучия, добра и мира в новом году! ***".to_owned()));
         Ok(Self{tx, rx, timer,
             driver: Ws2812Esp32RmtDriver::new(channel, pin)?, 
             color: Color {r: 64, g:0, b:0}, 
             font: Font::new(), 
-            leds_count: 256, 
+            leds_count: 512, 
             offset: 0,
             cache: vec![0],
         })
@@ -97,10 +96,11 @@ impl LedBoard {
         Ok(())
     }
     pub fn draw(&mut self) -> Result<()> {
-        let pixels: Vec<_> = iter::repeat(0).take(self.leds_count)
+        let columns = self.leds_count / BOARD_HEIGHT;
+        let pixels:Vec<_> = iter::repeat(0).take(columns)
             .chain(self.cache.iter().copied())
             .chain(iter::repeat(0))
-            .skip(self.offset).take(self.leds_count / BOARD_HEIGHT)
+            .skip(self.offset).take(columns)
             .enumerate().map(|(n, m)|if n%2 == 1 {m.reverse_bits()} else {m})//это потому что диоды соединены зиг-загом
             .collect();
         let color = self.color;

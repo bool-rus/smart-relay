@@ -288,22 +288,6 @@ impl SmartRelay {
 
         let flags = self.flags.clone();
         loop {
-            FreeRtos::delay_ms(500);
-            self.led.set_high()?;
-            if flags.relay1.load(Relaxed) {
-                info!("activate relay 1");
-                enable_on_sec(&mut self.relay1)?;
-                flags.relay1.store(false, Relaxed);
-            }
-            if flags.relay2.load(Relaxed) {
-                info!("activate relay 2");
-                enable_on_sec(&mut self.relay2)?;
-                flags.relay2.store(false, Relaxed);
-            }
-            if !self.wifi.is_connected()? {
-                self.blink(30, 15)?;
-                bail!("WiFi disconnected");
-            }
             if let Some(c) = Self::invoke_creds(flags.clone()) {
                 info!("received new wifi creds, esp will update and restart");
                 if c.ssid.is_empty() {
@@ -316,15 +300,6 @@ impl SmartRelay {
             }
             self.led.set_low()?;
         }
-    }
-    fn blink(&mut self, n: u32, on: u32) -> Result<()> {
-        for _ in 0..n {
-            self.led.set_high()?;
-            FreeRtos::delay_ms(on);
-            self.led.set_low()?;
-            FreeRtos::delay_ms(on);
-        }
-        Ok(())
     }
 
 }

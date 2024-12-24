@@ -11,7 +11,7 @@ impl Font {
         Self {symbols, default_symbol: vec![0b00000000u8]}
     }
     pub fn render(&self, text: &str) -> Vec<u8> { //bit-mask
-        text.chars().flat_map(|c|self.symbols.get(&c).unwrap_or(&self.default_symbol).iter()).copied().collect()
+        text.chars().flat_map(|c|self.symbols.get(&c).unwrap_or(&self.default_symbol).iter().chain(std::iter::once(&0))).copied().collect()
     }
     pub fn set_char(&mut self, c: char, mask: Vec<u8>) {
         self.symbols.insert(c, mask);
