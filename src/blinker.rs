@@ -1,32 +1,45 @@
 use std::time::Duration;
 
-use crossbeam::channel::Sender;
+use crossbeam::channel::{Receiver, Sender, TryRecvError};
 use esp_idf_svc::{hal::gpio::{AnyOutputPin, PinDriver}, timer::{EspTimer, EspTimerService}};
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 
-pub enum BlinkerMessage {
+pub enum Message {
     Low,
     High,
 }
 
-pub struct Blinker<T> {
+pub struct Blinker {
     pin: PinDriver<'static, AnyOutputPin, esp_idf_svc::hal::gpio::Output>, 
     timer: EspTimer<'static>,
-    tx: Sender<T>
+    tx: Sender<Message>,
+    rx: Receiver<Message>,
 }
 
-impl<T: From<BlinkerMessage> + Send + Sync + 'static> Blinker<T> {
-    pub fn new(pin: AnyOutputPin, timer_service: &EspTimerService<esp_idf_svc::timer::Task>, tx: Sender<T>) -> Result<Self> {
+impl Blinker {
+    pub fn new(timer_service: &EspTimerService<esp_idf_svc::timer::Task>, pin: AnyOutputPin) -> Result<Self> {
         let pin = PinDriver::output(pin)?;
+        let (tx, rx) = crossbeam::channel::unbounded();
         let txc = tx.clone();
-        let timer = timer_service.timer(move||{txc.send(BlinkerMessage::Low.into());})?;
-        Ok(Self {pin, timer, tx})
+        let timer = timer_service.timer(move||{txc.send(Message::Low.into());})?;
+        Ok(Self {pin, timer, tx, rx})
     }
-    pub fn process(&mut self, msg: BlinkerMessage)  -> Result<()>{
+    pub fn tx(&self) -> Sender<Message> {
+        self.tx.clone()
+    }
+    pub fn process(&mut self)  -> Result<()>{
+        match self.rx.try_recv() {
+            Ok(msg) => self.process_iteration(msg)?,
+            Err(TryRecvError::Empty) => return Ok(()),
+            Err(TryRecvError::Disconnected) => bail!("blinker channel closed"),
+        }
+        Ok(())
+    }
+    pub fn process_iteration(&mut self, msg: Message) -> Result<()> {
         match msg {
-            BlinkerMessage::Low => {self.pin.set_low()?;},
-            BlinkerMessage::High => {
+            Message::Low => {self.pin.set_low()?;},
+            Message::High => {
                 self.pin.set_high()?;
                 self.timer.after(Duration::from_secs(1))?;
             },

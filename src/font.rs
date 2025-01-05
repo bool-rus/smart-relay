@@ -11,7 +11,9 @@ impl Font {
         Self {symbols, default_symbol: vec![0b00000000u8]}
     }
     pub fn render(&self, text: &str) -> Vec<u8> { //bit-mask
-        text.chars().flat_map(|c|self.symbols.get(&c).unwrap_or(&self.default_symbol).iter().chain(std::iter::once(&0))).copied().collect()
+        text.chars().flat_map(|c|
+            self.symbols.get(&c).unwrap_or(&self.default_symbol).iter().skip_while(|&&n|n==0).chain(std::iter::once(&0))
+        ).copied().collect()
     }
     pub fn set_char(&mut self, c: char, mask: Vec<u8>) {
         self.symbols.insert(c, mask);
@@ -432,6 +434,103 @@ pub fn make_font() -> HashMap<char, Vec<u8>> {
         0b10000010,
         0b10000010,
         0b01000100,
+    ]);
+    font.insert('Т', vec![
+        0b00000010,
+        0b00000010,
+        0b11111110,
+        0b00000010,
+        0b00000010,
+    ]);
+    font.insert('У', vec![
+        0b10000010,
+        0b01000100,
+        0b00101000,
+        0b00010000,
+        0b00001110,
+    ]);
+    font.insert('Ф', vec![
+        0b00011100,
+        0b00100010,
+        0b11111110,
+        0b00100010,
+        0b00011100,
+    ]);
+    font.insert('Х', vec![
+        0b11000110,
+        0b00101000,
+        0b00010000,
+        0b00101000,
+        0b11000110,
+    ]);
+    font.insert('Ц', vec![
+        0b11111110,
+        0b10000000,
+        0b10000000,
+        0b11111110,
+        0b10000000,
+    ]);
+    font.insert('Ч', vec![
+        0b00001110,
+        0b00010000,
+        0b00010000,
+        0b11111110,
+    ]);
+    font.insert('Ш', vec![
+        0b11111110,
+        0b10000000,
+        0b11111110,
+        0b10000000,
+        0b11111110,
+    ]);
+    font.insert('Щ', vec![
+        0b11111110,
+        0b10000000,
+        0b11111110,
+        0b10000000,
+        0b11111110,
+        0b10000000,
+    ]);
+    font.insert('Ь', vec![
+        0b11111110,
+        0b10010000,
+        0b10010000,
+        0b01100000,
+    ]);
+    font.insert('Ы', vec![
+        0b11111110,
+        0b10010000,
+        0b10010000,
+        0b01100000,
+        0b00000000,
+        0b11111110,
+    ]);
+    font.insert('Ъ', vec![
+        0b00000010,
+        0b11111110,
+        0b10010000,
+        0b10010000,
+        0b01100000,
+    ]);
+    font.insert('Э', vec![
+        0b01000100,
+        0b10010010,
+        0b10010010,
+        0b01111100,
+    ]);
+    font.insert('Ю', vec![
+        0b11111110,
+        0b00010000,
+        0b01111100,
+        0b10000010,
+        0b10000010,
+        0b01111100,
+    ]);
+    font.insert('Я', vec![
+        0b10001100,
+        0b01010010,
+        0b00110010,
+        0b11111110,
     ]);
     font
 }

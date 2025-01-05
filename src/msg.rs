@@ -1,25 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{blinker::BlinkerMessage, ledboard::{self, LedBoard}};
+use crate::{blinker,ledboard};
 
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct WifiCreds {
-    pub ssid: String,
-    pub pass: String,
-}
 pub enum Message {
     ActivateRelay(u8),
-    ConnectWifi(WifiCreds),
-    ShowText(String),
-    LedOn,
-    LedOff,
-    Blinker(BlinkerMessage),
+    ConnectWifi(crate::config::Wifi),
+    Blinker(blinker::Message),
     LedBoard(ledboard::Message),
-}
-
-impl From<BlinkerMessage> for Message {
-    fn from(value: BlinkerMessage) -> Self {
-        Self::Blinker(value)
-    }
 }
