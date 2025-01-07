@@ -15,15 +15,16 @@ use anyhow::{Result, bail};
 use esp_idf_svc::http::server::EspHttpServer;
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
+use esp_idf_svc::sys::{esp_pm_config_esp32s2_t, esp_pm_configure, esp_pm_get_configuration, ESP_ERR_INVALID_ARG, ESP_ERR_NOT_SUPPORTED, ESP_OK};
 use esp_idf_svc::timer::{EspTimerService, Task};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use ledboard::{Color, LedBoard};
 use log::info;
 use msg::Message;
 
-const SLEEP_MS: u32 = 1;
+const SLEEP_MS: u32 = 11;
 pub const MAX_BUFFER_SIZE: usize = 512;
-const INDEX_PAGE: &'static [u8] = include_bytes!("index.html");
+const INDEX_PAGE: &'static [u8] = &[1,2,3];//include_bytes!("index.html");
 
 const STACK_SIZE: usize = 10240;
 const NS: &str = "wifi-auth-data";
@@ -34,6 +35,7 @@ mod msg;
 mod font;
 mod blinker;
 mod config;
+mod driver;
 
 pub trait OkOrLog<T> {
     fn ok_or_log(self) -> Option<T>;
@@ -52,6 +54,21 @@ impl<T,E: std::fmt::Debug> OkOrLog<T> for std::result::Result<T,E> {
 fn main() {
     esp_idf_svc::sys::link_patches();
     EspLogger::initialize_default();
+
+    let mut conf = esp_pm_config_esp32s2_t { max_freq_mhz: 160, min_freq_mhz: 160, light_sleep_enable: false };
+    let res = unsafe {
+        let conf = &mut conf as *mut esp_pm_config_esp32s2_t;
+        use core::ffi::c_void;
+        esp_pm_get_configuration(conf as *mut c_void)
+        //esp_pm_configure(conf as *const c_void)
+    };
+    match res {
+        ESP_OK => info!("pm conigured {conf:?}!"),
+        ESP_ERR_INVALID_ARG => log::error!("pm: invalid arg"),
+        ESP_ERR_NOT_SUPPORTED => log::error!("pm: not supported"),
+        e => log::error!("pm: unknown err {e}"),
+    }
+
     for i in 0..3 {
         let t = std::time::SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
         info!("привет {i}: {}", t.as_secs());
@@ -191,12 +208,14 @@ fn start_server(tx: Sender<Message>) -> anyhow::Result<EspHttpServer<'static>> {
                 return Ok(())
             }
         };
-        if let Some(config::Led {color, move_period, text, width}) = data.led {
+        if let Some(config::Led {color, move_period, text, width, lt_delta, move_step}) = data.led {
             use ledboard::Message::*;
             color.map(|c|txc.send(Message::LedBoard(SetColor(c))));
             move_period.map(|ms|txc.send(Message::LedBoard(SetMovePeriod(Duration::from_millis(ms)))));
             text.map(|text|txc.send(Message::LedBoard(Text(text))));
             width.map(|width|txc.send(Message::LedBoard(SetBoardWith(width))));
+            lt_delta.map(|delta|txc.send(Message::LedBoard(LowTimingDelta(delta))));
+            move_step.map(|step|txc.send(Message::LedBoard(SetMoveStep(step))));
         };
         data.wifi.map(|wifi|txc.send(Message::ConnectWifi(wifi)));
         req.into_ok_response()?.write_all(b"OK")?;
@@ -293,12 +312,12 @@ impl SmartRelay {
 
         info!("running led");
         let timer = EspTimerService::new()?;
-        let ledboard = LedBoard::new(partition.clone(), &timer, peripherals.rmt.channel2, peripherals.pins.gpio16)?;
         let wifi = create_wifi(peripherals.modem, &mut nvs)?;
 
         wifi.wait_netif_up()?;
         let server = start_server(tx.clone())?;
         let blinker = Blinker::new(&timer, peripherals.pins.gpio15.into())?;
+        let ledboard = LedBoard::new(partition.clone(), &timer, peripherals.rmt.channel2, peripherals.pins.gpio16)?;
         let this = Self {relay1, relay2, wifi, nvs, server, tx, rx, blinker, ledboard};
         Ok(this)
     }

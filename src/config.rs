@@ -7,6 +7,8 @@ pub struct Led {
     pub width: Option<usize>,
     pub move_period: Option<u64>,
     pub text: Option<String>,
+    pub lt_delta: Option<u64>,
+    pub move_step: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize)]
