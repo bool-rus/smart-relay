@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 pub struct Font {
-    symbols: HashMap<char, u64>,
+    pub symbols: HashMap<char, u64>,
     default_symbol: u64,
 }
 

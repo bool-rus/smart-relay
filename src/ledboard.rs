@@ -1,8 +1,12 @@
-use std::{collections::HashMap, iter, sync::Arc, time::Duration};
+use std::{collections::HashMap, iter, time::{Duration, Instant}};
 use crossbeam::channel::*;
-use esp_idf_svc::{hal::{delay::FreeRtos, gpio::{AnyOutputPin, OutputPin}, peripheral::Peripheral, rmt::{PinState, Pulse, RmtChannel, Signal, Symbol, TxRmtConfig, TxRmtDriver}, units::Hertz}, nvs::{EspDefaultNvs, EspDefaultNvsPartition, NvsDefault}, timer::{EspTimer, EspTimerService, Task}};
+use esp_idf_svc::timer::{EspTimer, EspTimerService, Task};
+use esp_idf_svc::nvs::{EspDefaultNvs, EspDefaultNvsPartition};
+use esp_idf_svc::hal::{peripheral::Peripheral, rmt::RmtChannel};
+use esp_idf_svc::hal::gpio::OutputPin;
 use serde::{Deserialize, Serialize};
 use crate::driver::Driver;
+use crate::config::Symbol;
 use anyhow::Result;
 
 use crate::{font::Font, OkOrLog};
@@ -17,8 +21,32 @@ pub enum Message {
     SetColor(Color),
     LowTimingDelta(u64),
     SetMoveStep(usize),
+    SetFont(Vec<Symbol>),
+    SetSpaceWidth(u8),
 }
 
+fn render(text: &str, storage: &Storage, defaults: &HashMap<char, u64>) -> Vec<u8> { //bit-mask
+    let space_width = storage.space_width();
+    text.chars().map(|c| {
+        let m = storage.symbol(c);
+        if m == 0 {
+            defaults.get(&c).copied().unwrap_or(0)
+        } else {m}
+    }).flat_map(|m|{
+        let bytes = m.to_ne_bytes();
+        //ищем первый ненулевой байт
+        let mut skip = u8::BITS - space_width as u32 % u8::BITS;
+        let mut i = 0;
+        for b in bytes {
+            if b > 0 {
+                skip = i;
+                break;
+            }
+            i+=1;
+        }
+        bytes.into_iter().skip(skip as usize).chain(std::iter::once(0))
+    }).collect()
+}
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 pub struct Color {pub r: u8, pub g: u8, pub b: u8}
@@ -37,6 +65,10 @@ impl Storage {
     const COLOR: &'static str = "COLOR";
     const LTDELTA: &'static str = "LTDELTA";
     const MOVE_STEP: &'static str = "MSTEP";
+    const SPACE_WIDTH: &'static str = "SPACE";
+    fn make_liter(c: char) -> String {
+        format!("L{c}")
+    }
     fn new(partition: EspDefaultNvsPartition) -> Result<Self> {
         let nvs = EspDefaultNvs::new(partition, "lb", true)?;
         Ok(Self(nvs))
@@ -91,6 +123,18 @@ impl Storage {
     fn set_move_step(&self, step: usize) {
         self.0.set_u32(Self::MOVE_STEP, step as u32).ok_or_log();
     }
+    fn symbol(&self, c: char) -> u64 {
+        self.0.get_u64(Self::make_liter(c).as_str()).ok_or_log().flatten().unwrap_or_default()
+    }
+    fn set_symbol(&self, c: char, value: u64) {
+        self.0.set_u64(Self::make_liter(c).as_str(), value).ok_or_log();
+    }
+    fn space_width(&self) -> u8 {
+        self.0.get_u8(Self::SPACE_WIDTH).ok_or_log().flatten().unwrap_or(4)
+    }
+    fn set_space_width(&self, width: u8) {
+        self.0.set_u8(Self::SPACE_WIDTH, width as u8).ok_or_log();
+    }
 }
 
 pub struct LedBoard {
@@ -98,13 +142,14 @@ pub struct LedBoard {
     move_step: usize,
     cache: Vec<u8>,
     offset: usize,
-    driver: crate::driver::Driver<'static>,
+    driver: Driver<'static>,
     timer: EspTimer<'static>,
     tx: Sender<Message>,
     rx: Receiver<Message>,
     color: Color,
     font: Font,
     storage: Storage,
+    drawing: Instant,
 }
 
 impl LedBoard {
@@ -122,16 +167,17 @@ impl LedBoard {
         let timer = timer.timer(move ||{txc.send(Message::Move).ok_or_log();})?;
         let font = Font::new();
         let text = storage.text();
-        let cache = font.render(&text);
+        let cache = render(&text, &storage, &font.symbols);
         let board_width = storage.board_width();
         let color = storage.color();
         let move_period = storage.move_period();
         let move_step = storage.move_step();
         let lt_delta = storage.lt_delta();
-        log::info!("Starting ledboard with config: \n\ttext: {text}\n\tboard with: {board_width}\n\tcolor: {color:?}\n\tmove period: {} ms\n\tlt_delta: {lt_delta} ns", move_period.as_millis());
-        let mut driver = crate::driver::Driver::new(channel, pin)?;
-        driver.set_lt_delta(lt_delta);
+        log::info!("Starting ledboard with config: \n\ttext: {text}\n\tboard with: {board_width}\n\tcolor: {color:?}\n\tmove period: {} ms\n\tmove step: {move_step}\n\tlt_delta: {lt_delta} ns", move_period.as_millis());
+        let mut driver = Driver::new(channel, pin)?;
+        driver.set_lt_delta(lt_delta)?;
         timer.every(move_period)?;
+        let drawing = Instant::now();
         Ok(Self{tx, rx, timer,
             driver, 
             color, 
@@ -141,6 +187,7 @@ impl LedBoard {
             offset: 0,
             cache,
             storage,
+            drawing,
         })
     }
     pub fn tx(&self) -> Sender<Message> {
@@ -167,10 +214,12 @@ impl LedBoard {
     fn process_iteration(&mut self, msg: Message) -> Result<()> {
         match msg {
             Message::Text(text) => {
-                self.cache = self.font.render(&text);
+                let d = Instant::now();
+                self.cache = render(&text, &self.storage, &self.font.symbols);
+                let d = d.elapsed();
                 self.offset = 0;
                 self.storage.set_text(&text);
-                log::info!("received text: {text}");
+                log::info!("received text: {text}, rendered at {} ms", d.as_millis());
             },
             Message::Move => {
                 self.offset +=self.move_step;
@@ -183,7 +232,7 @@ impl LedBoard {
             Message::SetMovePeriod(period) => {
                 log::info!("received move period option: {} ms", period.as_millis());
                 let min_move_period = self.min_move_period(self.storage.lt_delta());
-                let period =  if min_move_period > self.storage.move_period() {
+                let period =  if min_move_period > period {
                     log::info!("need to increase move period to {} ms", min_move_period.as_millis());
                     min_move_period
                 } else {period};
@@ -216,23 +265,31 @@ impl LedBoard {
                 self.storage.set_move_step(step);
                 log::info!("received move step: {step}");
             }
+            Message::SetFont(symbols) => {
+                let symbols: Vec<_> = symbols.into_iter().map(|Symbol { symbol, mask }|{
+                    self.storage.set_symbol(symbol, u64::from_ne_bytes(mask));
+                    symbol
+                }).collect();
+                log::info!("Received symbols: {symbols:?}");
+            },
+            Message::SetSpaceWidth(width) => {
+                let width = width as u32 % u8::BITS;
+                self.storage.set_space_width(width as u8);
+                log::info!("received space width: {width}");
+            },
         }
         Ok(())
     }
     pub fn draw(&mut self) -> Result<()> {
         let columns = self.board_width;
-        let pixels = iter::repeat(&0).take(columns)
+        let buf: Vec<_> = iter::repeat(&0).take(columns)
             .chain(self.cache.iter())
             .chain(iter::repeat(&0))
             .skip(self.offset).take(columns)
             .copied()
             .enumerate().map(|(n, m)|if n%2 == 1 {m.reverse_bits()} else {m})//это потому что диоды соединены зиг-загом
-            ;//.collect();
-        let mut buf = [0u8;64];
-        
-        for (i, p) in pixels.enumerate() {
-            buf[i] = p;
-        }
+            .collect();
+
         let color = self.color;
         let seq = buf.into_iter().take(columns).flat_map(|m|{
             (0..u8::BITS).map(move |n|(m >> n) & 1)
@@ -240,7 +297,7 @@ impl LedBoard {
         let instant = std::time::Instant::now();
         self.driver.write(seq)?;
         let elapsed = instant.elapsed();
-        log::info!("drawed frame at {} ms", elapsed.as_millis());
+        //log::info!("drawed frame at {} ms", elapsed.as_millis());
         Ok(())
     }
     pub fn move_period(&self, period: Duration) -> Result<()> {

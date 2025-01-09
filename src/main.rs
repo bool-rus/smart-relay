@@ -16,7 +16,7 @@ use esp_idf_svc::http::server::EspHttpServer;
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use esp_idf_svc::sys::{esp_pm_config_esp32s2_t, esp_pm_configure, esp_pm_get_configuration, ESP_ERR_INVALID_ARG, ESP_ERR_NOT_SUPPORTED, ESP_OK};
-use esp_idf_svc::timer::{EspTimerService, Task};
+use esp_idf_svc::timer::{EspTimer, EspTimerService, Task};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use ledboard::{Color, LedBoard};
 use log::info;
@@ -24,7 +24,7 @@ use msg::Message;
 
 const SLEEP_MS: u32 = 11;
 pub const MAX_BUFFER_SIZE: usize = 512;
-const INDEX_PAGE: &'static [u8] = &[1,2,3];//include_bytes!("index.html");
+const INDEX_PAGE: &'static [u8] = include_bytes!("index.html");
 
 const STACK_SIZE: usize = 10240;
 const NS: &str = "wifi-auth-data";
@@ -108,7 +108,15 @@ fn create_ap_wifi(hw: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()>
     Ok(())
 }
 
-fn create_wifi<T: esp_idf_svc::nvs::NvsPartitionId>(modem: Modem, nvs: &mut EspNvs<T>) -> anyhow::Result<BlockingWifi<EspWifi<'static>>> {
+fn invoke_creds<T: esp_idf_svc::nvs::NvsPartitionId>(nvs: &mut EspNvs<T>) -> Result<config::Wifi> {
+    let mut buf = [0u8;100];
+    let raw = nvs.get_raw(WIFI_CREDS, &mut buf)?;
+    let raw = raw.ok_or(anyhow::anyhow!("no creds in nvs"))?;
+    let wifi = serde_json::from_slice(raw)?;
+    Ok(wifi)
+}
+
+fn create_wifi<T: esp_idf_svc::nvs::NvsPartitionId>(modem: Modem, nvs: &mut EspNvs<T>, reconnect: &EspTimer<'static>) -> anyhow::Result<BlockingWifi<EspWifi<'static>>> {
     info!("creating wifi");
     let sys_loop = EspSystemEventLoop::take()?;
     let mut wifi = BlockingWifi::wrap(
@@ -117,24 +125,14 @@ fn create_wifi<T: esp_idf_svc::nvs::NvsPartitionId>(modem: Modem, nvs: &mut EspN
     )?;
     info!("wifi created");
     let mut buf = vec![0u8;100];
-    match nvs.get_raw(WIFI_CREDS, &mut buf)?
-        .map(|data|serde_json::from_slice::<config::Wifi>(data)) {
-            Some(Ok(creds)) => {
-                if let Err(e) = create_client_wifi(&mut wifi, creds) {
-                    log::error!("Cannot connect: {e}");
-                    create_ap_wifi(&mut wifi)?;
-                }
-            },
-            Some(Err(e)) => {
-                log::error!("Cannot invoke creds: {e}");
-                create_ap_wifi(&mut wifi)?
-            },
-            None =>  create_ap_wifi(&mut wifi)?
-        }
+    if invoke_creds(nvs).ok_or_log().map(|creds|connect_to_wifi(&mut wifi, creds).ok_or_log()).flatten().is_none() {
+        reconnect.after(Duration::from_secs(60)).ok_or_log();
+        create_ap_wifi(&mut wifi)?
+    }
     Ok(wifi)
 }
 
-fn create_client_wifi(hw: &mut BlockingWifi<EspWifi<'static>>, creds: config::Wifi) -> Result<()> {
+fn connect_to_wifi(hw: &mut BlockingWifi<EspWifi<'static>>, creds: config::Wifi) -> Result<()> {
     use esp_idf_svc::wifi;
     let config::Wifi { ssid, pass } = creds;
     let wifi_configuration = wifi::Configuration::Client(wifi::ClientConfiguration {
@@ -208,7 +206,9 @@ fn start_server(tx: Sender<Message>) -> anyhow::Result<EspHttpServer<'static>> {
                 return Ok(())
             }
         };
-        if let Some(config::Led {color, move_period, text, width, lt_delta, move_step}) = data.led {
+        if let Some(config::Led {color, move_period, 
+            text, width, lt_delta, 
+            move_step, font, space_width}) = data.led {
             use ledboard::Message::*;
             color.map(|c|txc.send(Message::LedBoard(SetColor(c))));
             move_period.map(|ms|txc.send(Message::LedBoard(SetMovePeriod(Duration::from_millis(ms)))));
@@ -216,8 +216,10 @@ fn start_server(tx: Sender<Message>) -> anyhow::Result<EspHttpServer<'static>> {
             width.map(|width|txc.send(Message::LedBoard(SetBoardWith(width))));
             lt_delta.map(|delta|txc.send(Message::LedBoard(LowTimingDelta(delta))));
             move_step.map(|step|txc.send(Message::LedBoard(SetMoveStep(step))));
+            font.map(|font|txc.send(Message::LedBoard(SetFont(font))));
+            space_width.map(|w|txc.send(Message::LedBoard(SetSpaceWidth(w))));
         };
-        data.wifi.map(|wifi|txc.send(Message::ConnectWifi(wifi)));
+        data.wifi.map(|wifi|txc.send(Message::SetWifi(wifi)));
         req.into_ok_response()?.write_all(b"OK")?;
         Ok(())
     })?;
@@ -272,7 +274,7 @@ fn start_server(tx: Sender<Message>) -> anyhow::Result<EspHttpServer<'static>> {
                 return Ok(())
             }
         };
-        txc.send(Message::ConnectWifi(data)).ok_or_log();
+        txc.send(Message::SetWifi(data)).ok_or_log();
         req.into_ok_response()?.write_all(b"OK")?;
         Ok(())
     })?;
@@ -285,12 +287,13 @@ struct SmartRelay {
     relay1: PinDriver<'static, AnyOutputPin, Output>,
     relay2: PinDriver<'static, AnyOutputPin, Output>,
     wifi: BlockingWifi<EspWifi<'static>>,
-    server: EspHttpServer<'static>,
+    server: Option<EspHttpServer<'static>>,
     nvs: EspNvs<NvsDefault>,
     tx: Sender<Message>,
     rx: Receiver<Message>,
     blinker: Blinker,
     ledboard: LedBoard,
+    reconnect_timer: EspTimer<'static>,
 }
 
 impl SmartRelay {
@@ -312,33 +315,54 @@ impl SmartRelay {
 
         info!("running led");
         let timer = EspTimerService::new()?;
-        let wifi = create_wifi(peripherals.modem, &mut nvs)?;
+        let txc = tx.clone();
+        let reconnect_timer = timer.timer(move||{txc.send(Message::ConnectWifi).ok_or_log();})?;
+        let wifi = create_wifi(peripherals.modem, &mut nvs, &reconnect_timer)?;
 
         wifi.wait_netif_up()?;
-        let server = start_server(tx.clone())?;
+        let server = Some(start_server(tx.clone())?);
         let blinker = Blinker::new(&timer, peripherals.pins.gpio15.into())?;
         let ledboard = LedBoard::new(partition.clone(), &timer, peripherals.rmt.channel2, peripherals.pins.gpio16)?;
-        let this = Self {relay1, relay2, wifi, nvs, server, tx, rx, blinker, ledboard};
+        let this = Self {relay1, relay2, wifi, nvs, server, tx, rx, blinker, ledboard, reconnect_timer};
         Ok(this)
     }
     fn process(&mut self, msg: Message) -> Result<()> {
         match msg {
             Message::ActivateRelay(_) => todo!(),
-            Message::ConnectWifi(wifi_creds) => self.connect_wifi(wifi_creds)?,
+            Message::SetWifi(creds) => {
+                if creds.ssid.is_empty() {
+                    self.nvs.remove(WIFI_CREDS)?;
+                    restart();
+                } else {
+                    let buf = serde_json::to_vec(&creds)?;
+                    self.nvs.set_raw(WIFI_CREDS, &buf)?;
+                }
+                self.tx.send(Message::ConnectWifi)?;
+            },
+            Message::ConnectWifi => {self.connect_wifi()?;},
             Message::Blinker(msg) => self.blinker.tx().send(msg)?,
             Message::LedBoard(message) => self.ledboard.tx().send(message)?,
         }
         Ok(())
     }
-    fn connect_wifi(&mut self, creds: config::Wifi) -> Result<()> {
-        info!("received new wifi creds, esp will update and restart");
-        if creds.ssid.is_empty() {
-            self.nvs.remove(WIFI_CREDS)?;
-        } else {
-            let buf = serde_json::to_vec(&creds)?;
-            self.nvs.set_raw(WIFI_CREDS, &buf)?;
+    fn connect_wifi(&mut self) -> Result<()> {
+        let creds = match invoke_creds(&mut self.nvs).ok_or_log() {
+            Some(creds) => creds,
+            None => return Ok(()),
+        };
+        self.server = None;
+        self.wifi.stop()?;
+        match connect_to_wifi(&mut self.wifi, creds) {
+            Ok(_) => {},
+            Err(e) => {
+                log::error!("cannot connect to wifi: {e}\nstaritng Access Point...");
+                create_ap_wifi(&mut self.wifi)?;
+                self.reconnect_timer.after(Duration::from_secs(60)).ok_or_log();
+            },
         }
-        restart();
+        self.wifi.wait_netif_up()?;
+        self.server = Some(start_server(self.tx.clone())?);
+        Ok(())
     }
     fn run(&mut self) -> Result<()> {
         loop {
